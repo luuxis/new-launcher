@@ -1,53 +1,63 @@
-name: Build Tauri Application
+name: 'publish'
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - master
-  pull_request:
 
 jobs:
-  build:
-    name: Build for ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-
+  publish-tauri:
+    permissions:
+      contents: write
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+          - platform: 'windows-latest'
+            args: ''
 
+    runs-on: ${{ matrix.platform }}
     steps:
-      # Checkout the code
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      # Setup Node.js
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: setup node
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: lts/*
 
-      # Setup Rust (required by Tauri)
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      # Install Tauri CLI globally
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
 
-      # Install dependencies
-      - name: Install Node.js dependencies
+      - name: install frontend dependencies
         run: npm install
 
-      # Build the Tauri application
-      - name: Build Tauri application
-        run: npm run tauri build
-
-      # Save build artefacts
-      - name: Upload Build Artefacts
-        uses: actions/upload-artifact@v3
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: tauri-build-${{ matrix.os }}
-          path: src-tauri/target/release/bundle/
+          tagName: app-v__VERSION__
+          releaseName: 'App v__VERSION__'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
